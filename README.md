@@ -1,5 +1,7 @@
 # Pearson AIS Protocol v2.0 — Minimal Runtime Demo
 
+[![AIS Tests](https://github.com/juniperpearson/pearson-ais-demo/actions/workflows/tests.yml/badge.svg)](https://github.com/juniperpearson/pearson-ais-demo/actions/workflows/tests.yml)
+
 A lightweight Python reference implementation demonstrating selected runtime-authority semantics from the Pearson Alignment Integrity Systems (AIS) Protocol v2.0.
 
 > **Capability is not authority.**
