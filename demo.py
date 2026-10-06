@@ -37,6 +37,18 @@ class MVSO:
         self.active_lease = None
 
     def authority_valid(self, lease):
+        """
+        Runtime authority exists only when all required conditions hold.
+
+        Simplified AIS authority model:
+
+        Authority =
+            GovernanceIntegrity
+            AND NOT HardVeto
+            AND NOT LogicalZero
+            AND LeaseValid
+        """
+
         reasons = []
 
         if not self.governance_integrity:
@@ -51,10 +63,18 @@ class MVSO:
         if lease is None:
             reasons.append("no execution lease")
 
-        elif lease.epoch != self.authority_epoch:
-            reasons.append(
-                f"epoch mismatch: lease={lease.epoch}, current={self.authority_epoch}"
-            )
+        else:
+            if lease.epoch != self.authority_epoch:
+                reasons.append(
+                    f"epoch mismatch: "
+                    f"lease={lease.epoch}, current={self.authority_epoch}"
+                )
+
+            if self.active_lease is None:
+                reasons.append("no committed execution lease")
+
+            elif lease.lease_id != self.active_lease.lease_id:
+                reasons.append("lease has not been committed")
 
         authorized = len(reasons) == 0
 
@@ -62,12 +82,17 @@ class MVSO:
             print("[AUTHORITY] GRANTED")
         else:
             print("[AUTHORITY] DENIED")
+
             for reason in reasons:
                 print(f"            - {reason}")
 
         return authorized
 
     def evaluate_action(self, action):
+        """
+        Evaluate an actor request against the simplified hard-invariant set.
+        """
+
         print(f"\n[ACTOR] Requested action: {action}")
 
         if action in PROHIBITED_ACTIONS:
@@ -80,23 +105,36 @@ class MVSO:
             return False
 
         print("[IGO] No hard invariant violation")
+
         return True
 
     def enter_logical_zero(self):
+        """
+        Revoke mission authority and advance the protected Authority Epoch.
+        """
+
         print("[MVSO] Autonomous authority revoked")
 
         self.logical_zero = True
+
+        # Containment destroys currently committed runtime authority.
+        self.active_lease = None
 
         old_epoch = self.authority_epoch
         self.authority_epoch += 1
 
         print("[LOGICAL ZERO] Containment latched")
+
         print(
             f"[EPOCH] Authority Epoch advanced: "
             f"{old_epoch} -> {self.authority_epoch}"
         )
 
     def resolve_fault(self):
+        """
+        Remove the triggering fault without restoring execution authority.
+        """
+
         print("\n[RECOVERY] Triggering condition resolved")
 
         self.hard_veto = False
@@ -106,6 +144,13 @@ class MVSO:
         )
 
     def layer_c_eligible(self):
+        """
+        Determine whether the system may attempt post-containment
+        revalidation.
+
+        Layer C does not restore authority.
+        """
+
         eligible = (
             self.governance_integrity
             and not self.hard_veto
@@ -120,6 +165,11 @@ class MVSO:
         return eligible
 
     def revalidate(self):
+        """
+        Collect simplified post-containment evidence while authority
+        remains revoked.
+        """
+
         if not self.layer_c_eligible():
             return False
 
@@ -127,9 +177,17 @@ class MVSO:
         print("[D_R] Revalidation PASS")
 
         self.revalidation_passed = True
+
         return True
 
     def issue_new_lease(self):
+        """
+        Issue a new Execution Lease Object for the current Authority Epoch.
+
+        Possessing the lease alone does not restore authority.
+        It must still pass guarded LeaseCommit.
+        """
+
         if not self.revalidation_passed:
             print("[ELO] DENIED: revalidation incomplete")
             return None
@@ -147,6 +205,10 @@ class MVSO:
         return lease
 
     def commit_lease(self, lease):
+        """
+        Guarded authority restoration step.
+        """
+
         if lease is None:
             print("[LEASE COMMIT] DENIED: no lease")
             return False
@@ -156,7 +218,21 @@ class MVSO:
             return False
 
         if not self.revalidation_passed:
-            print("[LEASE COMMIT] DENIED: revalidation incomplete")
+            print(
+                "[LEASE COMMIT] DENIED: "
+                "revalidation incomplete"
+            )
+            return False
+
+        if self.hard_veto:
+            print("[LEASE COMMIT] DENIED: hard veto active")
+            return False
+
+        if not self.governance_integrity:
+            print(
+                "[LEASE COMMIT] DENIED: "
+                "governance integrity failure"
+            )
             return False
 
         self.active_lease = lease
@@ -164,6 +240,7 @@ class MVSO:
         self.revalidation_passed = False
 
         print("[LEASE COMMIT] SUCCESS")
+
         return True
 
 
@@ -174,7 +251,10 @@ def run_demo():
 
     mvso = MVSO()
 
-    # Initial authority
+    # ---------------------------------------------------------
+    # 1. Actor begins with valid authority under Epoch 1
+    # ---------------------------------------------------------
+
     old_lease = ExecutionLease(
         lease_id="ELO-E1",
         epoch=1,
@@ -182,42 +262,90 @@ def run_demo():
 
     mvso.active_lease = old_lease
 
-    print("\n[START] Actor holds valid Epoch 1 execution authority")
+    print(
+        "\n[START] Actor holds valid Epoch 1 execution authority"
+    )
+
     mvso.authority_valid(old_lease)
 
-    # Actor requests something prohibited
-    mvso.evaluate_action("DELETE_PROTECTED_RECORD")
+    # ---------------------------------------------------------
+    # 2. Actor attempts a prohibited action
+    # ---------------------------------------------------------
 
-    print("\n[ACTOR] Attempting execution with old ELO")
+    mvso.evaluate_action(
+        "DELETE_PROTECTED_RECORD"
+    )
+
+    # ---------------------------------------------------------
+    # 3. Actor attempts to reuse its old lease
+    # ---------------------------------------------------------
+
+    print(
+        "\n[ACTOR] Attempting execution with old ELO"
+    )
+
     mvso.authority_valid(old_lease)
 
-    # Fault disappears
+    # ---------------------------------------------------------
+    # 4. Triggering fault disappears
+    # ---------------------------------------------------------
+
     mvso.resolve_fault()
 
-    print("\n[ACTOR] Attempting immediate resume")
+    print(
+        "\n[ACTOR] Attempting immediate resume"
+    )
+
     mvso.authority_valid(old_lease)
 
-    # Formal recovery path
+    # ---------------------------------------------------------
+    # 5. Formal recovery path begins
+    # ---------------------------------------------------------
+
     mvso.revalidate()
+
+    # ---------------------------------------------------------
+    # 6. Current-epoch lease is issued
+    # ---------------------------------------------------------
 
     new_lease = mvso.issue_new_lease()
 
-    print("\n[ACTOR] Fresh lease exists, but has not been committed")
+    print(
+        "\n[ACTOR] Fresh lease exists, "
+        "but has not been committed"
+    )
+
     mvso.authority_valid(new_lease)
 
-    # Guarded lease commit
+    # ---------------------------------------------------------
+    # 7. Guarded LeaseCommit restores authority
+    # ---------------------------------------------------------
+
     mvso.commit_lease(new_lease)
 
-    print("\n[ACTOR] Testing authority after guarded recovery")
+    print(
+        "\n[ACTOR] Testing authority after guarded recovery"
+    )
+
     mvso.authority_valid(new_lease)
 
+    # ---------------------------------------------------------
+    # Complete
+    # ---------------------------------------------------------
+
     print("\n" + "=" * 60)
+
     print("DEMO COMPLETE")
+
     print(
-        "Fault resolution did not restore authority.\n"
+        "Fault resolution did not restore authority."
+    )
+
+    print(
         "Fresh authority required revalidation, "
         "a current-epoch ELO, and LeaseCommit."
     )
+
     print("=" * 60)
 
 
