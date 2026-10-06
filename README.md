@@ -38,3 +38,10 @@ Fresh current-epoch ELO
 Guarded LeaseCommit
         ↓
 Authority restored
+```
+
+## Research Preprint
+
+**The Pearson AIS Protocol v2.0: Runtime Authority Governance for Fail-Closed Autonomous Systems**
+
+[DOI: 10.5281/zenodo.23192419](https://doi.org/10.5281/zenodo.23192419)
